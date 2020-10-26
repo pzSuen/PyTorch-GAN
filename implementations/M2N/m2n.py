@@ -21,9 +21,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch
 
-'''
---n_epochs 150 --dataset_name nuclear --batch_size 12 --decay_epoch 100 --img_height 512 --img_width 512 --checkpoint_interval 400 --n_downsample 4
-'''
 parser = argparse.ArgumentParser()
 parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
 parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
@@ -46,7 +43,6 @@ parser.add_argument("--style_dim", type=int, default=8, help="dimensionality of 
 opt = parser.parse_args()
 print(opt)
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2'
 cuda = torch.cuda.is_available()
 
 # Create sample and checkpoint directories
@@ -220,16 +216,16 @@ for epoch in range(opt.epoch, opt.n_epochs):
 
         # Total loss
         loss_G = (
-                loss_GAN_1
-                + loss_GAN_2
-                + loss_ID_1
-                + loss_ID_2
-                + loss_s_1
-                + loss_s_2
-                + loss_c_1
-                + loss_c_2
-                + loss_cyc_1
-                + loss_cyc_2
+            loss_GAN_1
+            + loss_GAN_2
+            + loss_ID_1
+            + loss_ID_2
+            + loss_s_1
+            + loss_s_2
+            + loss_c_1
+            + loss_c_2
+            + loss_cyc_1
+            + loss_cyc_2
         )
 
         loss_G.backward()

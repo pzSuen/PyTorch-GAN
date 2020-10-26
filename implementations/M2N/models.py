@@ -26,9 +26,16 @@ class LambdaLR:
 
 
 #################################
-#           Encoder
+#           EncoderS
 #################################
 
+#################################
+#           EncoderM
+#################################
+
+#################################
+#           Discriminator
+#################################
 
 class Encoder(nn.Module):
     def __init__(self, in_channels=3, dim=64, n_residual=3, n_downsample=2, style_dim=8):
