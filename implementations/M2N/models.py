@@ -26,27 +26,61 @@ class LambdaLR:
 
 
 #################################
-#           EncoderS
+#           Encoder
 #################################
-
-#################################
-#           EncoderM
-#################################
-
-#################################
-#           Discriminator
-#################################
-
 class Encoder(nn.Module):
     def __init__(self, in_channels=3, dim=64, n_residual=3, n_downsample=2, style_dim=8):
         super(Encoder, self).__init__()
         self.content_encoder = ContentEncoder(in_channels, dim, n_residual, n_downsample)
         self.style_encoder = StyleEncoder(in_channels, dim, n_downsample, style_dim)
 
-    def forward(self, x):
-        content_code = self.content_encoder(x)
-        style_code = self.style_encoder(x)
+    def forward(self, content, style):
+        content_code = self.content_encoder(content)
+        style_code = self.style_encoder(style)
         return content_code, style_code
+
+#################################
+#           EncoderS
+#################################
+
+#################################
+#           EncoderM
+#################################
+class ContentEncoder(nn.Module):
+    def __init__(self, in_channels=3, dim=64, n_downsample=2, n_residual=3):
+        super(ContentEncoder, self).__init__()
+
+        # Initial convolution block
+        layers = [
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(in_channels, dim, 7),
+            nn.InstanceNorm2d(dim),
+            nn.ReLU(inplace=True),
+        ]
+
+        # Downsampling
+        for _ in range(n_downsample):
+            layers += [
+                nn.Conv2d(dim, dim * 2, 4, stride=2, padding=1),
+                nn.InstanceNorm2d(dim * 2),
+                nn.ReLU(inplace=True),
+            ]
+            dim *= 2
+
+        # Residual blocks
+        for _ in range(n_residual):
+            layers += [ResidualBlock(dim, norm="in")]
+
+        self.model = nn.Sequential(*layers)
+
+    def forward(self, x):
+        return self.model(x)
+
+#################################
+#           Discriminator
+#################################
+
+
 
 
 #################################
@@ -113,35 +147,7 @@ class Decoder(nn.Module):
 #################################
 #        Content Encoder
 #################################
-class ContentEncoder(nn.Module):
-    def __init__(self, in_channels=3, dim=64, n_downsample=2, n_residual=3):
-        super(ContentEncoder, self).__init__()
 
-        # Initial convolution block
-        layers = [
-            nn.ReflectionPad2d(3),
-            nn.Conv2d(in_channels, dim, 7),
-            nn.InstanceNorm2d(dim),
-            nn.ReLU(inplace=True),
-        ]
-
-        # Downsampling
-        for _ in range(n_downsample):
-            layers += [
-                nn.Conv2d(dim, dim * 2, 4, stride=2, padding=1),
-                nn.InstanceNorm2d(dim * 2),
-                nn.ReLU(inplace=True),
-            ]
-            dim *= 2
-
-        # Residual blocks
-        for _ in range(n_residual):
-            layers += [ResidualBlock(dim, norm="in")]
-
-        self.model = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.model(x)
 
 
 #################################
