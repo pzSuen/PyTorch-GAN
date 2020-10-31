@@ -101,24 +101,30 @@ if __name__ == "__main__":
     #             nn.ReLU(inplace=True)
     #         )
     #     ),
-    import torch.nn as nn
-
-    nf = 64
-    input_nc = 3
-    wid = 128
-    style = torch.FloatTensor(np.random.random(size=(4, 3, wid, wid))).cuda()
-
-    norm_layer_nf = nn.InstanceNorm2d(nf, affine=False)
-    m = nn.InstanceNorm2d(nf, affine=True)
-
-    # bottom-up pathway
-    # width = w
-    enc1 = nn.Sequential(nn.Conv2d(input_nc, nf, kernel_size=4, stride=2, padding=1),
-                         nn.InstanceNorm2d(nf, affine=True)).cuda()
-    out = enc1(style)
-    print(enc1)
-    print(out.shape)
+    # import torch.nn as nn
+    #
+    # nf = 64
+    # input_nc = 3
+    # wid = 128
+    # style = torch.FloatTensor(np.random.random(size=(4, 3, wid, wid))).cuda()
+    #
+    # norm_layer_nf = nn.InstanceNorm2d(nf, affine=False)
+    # m = nn.InstanceNorm2d(nf, affine=True)
+    #
+    # # bottom-up pathway
+    # # width = w
+    # enc1 = nn.Sequential(nn.Conv2d(input_nc, nf, kernel_size=4, stride=2, padding=1),
+    #                      nn.InstanceNorm2d(nf, affine=True)).cuda()
+    # out = enc1(style)
+    # print(enc1)
+    # print(out.shape)
 
     # input = torch.randn(20, 100, 35, 45)
     # output = m(input)
     # print(output.shape)
+
+    a = torch.ones(size=(1, 1, 2, 2)).cuda()
+    b = torch.ones(size=(1, 1, 2, 2)) * 2
+    c = torch.ones(size=(1, 1, 2, 2)) * 3
+    d = torch.cat([a, b, c], dim=-1)
+    print(d.shape)

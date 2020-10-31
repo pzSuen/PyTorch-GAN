@@ -25,7 +25,7 @@ class ImageDataset(Dataset):
         self.images = sorted(glob.glob(self.images_dir + "/*.*"))
         self.masks = sorted(glob.glob(self.masks_dir + "/*.*"))
 
-    def __getitem__(self, index,show=True):
+    def __getitem__(self, index, show=False):
         fname = os.path.basename(self.images[index % len(self.images)])
         img = np.array(Image.open(os.path.join(self.images_dir, fname)))
         mask = np.array(Image.open(os.path.join(self.masks_dir, fname)))
@@ -54,35 +54,14 @@ class ImageDataset(Dataset):
 
             print(torch.max(img), torch.max(mask))
 
+        # print("............")
+        img = img.permute(2, 0, 1)
+        mask = mask.unsqueeze(0)
+        # print(img.shape, mask.shape)
         return {"image": img, "mask": mask}
 
     def __len__(self):
         return len(self.images)
-
-    def preprocess_input(self, data):
-        # move to GPU and change data types
-        data['label'] = data['label'].long()
-        if self.use_gpu():
-            data['label'] = data['label'].cuda()
-            data['instance'] = data['instance'].cuda()
-            data['image'] = data['image'].cuda()
-
-        # create one-hot label map
-        # 将不同的类别映射到不同的channel上
-        label_map = data['label']  # 读取的label map是单通道的，背景是0，类别一是1，类别二是2……
-        bs, _, h, w = label_map.size()
-        nc = self.opt.label_nc + 1 if self.opt.contain_dontcare_label else self.opt.label_nc  # label_nc是包含背景的
-        input_label = self.FloatTensor(bs, nc, h, w).zero_()
-        # 对于该图像不存在的类别的那一个channel会是全0
-        input_semantics = input_label.scatter_(1, label_map, 1.0)  # (dim,index,src)
-
-        # concatenate instance map if it exists
-        if not self.opt.no_instance:
-            inst_map = data['instance']
-            instance_edge_map = self.get_edges(inst_map)
-            input_semantics = torch.cat((input_semantics, instance_edge_map), dim=1)
-
-        return input_semantics, data['image']
 
 
 if __name__ == "__main__":

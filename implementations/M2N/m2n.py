@@ -32,12 +32,12 @@ parser.add_argument("--b1", type=float, default=0.5, help="adam: decay of first 
 parser.add_argument("--b2", type=float, default=0.999, help="adam: decay of first order momentum of gradient")
 parser.add_argument("--decay_epoch", type=int, default=100, help="epoch from which to start lr decay")
 parser.add_argument("--n_cpu", type=int, default=8, help="number of cpu threads to use during batch generation")
-parser.add_argument("--img_height", type=int, default=512, help="size of image height")
-parser.add_argument("--img_width", type=int, default=512, help="size of image width")
+parser.add_argument("--img_height", type=int, default=128, help="size of image height")
+parser.add_argument("--img_width", type=int, default=128, help="size of image width")
 parser.add_argument("--channels", type=int, default=3, help="number of image channels")
 parser.add_argument("--sample_interval", type=int, default=400, help="interval saving generator samples")
 parser.add_argument("--checkpoint_interval", type=int, default=-1, help="interval between saving model checkpoints")
-parser.add_argument("--n_downsample", type=int, default=4, help="number downsampling layers in encoder")
+parser.add_argument("--n_downsample", type=int, default=5, help="number downsampling layers in encoder")
 parser.add_argument("--n_residual", type=int, default=3, help="number of residual blocks in encoder / decoder")
 parser.add_argument("--dim", type=int, default=64, help="number of filters in first encoder layer")
 parser.add_argument("--label_nc", type=int, default=5, help="# of input label classes")
@@ -100,102 +100,170 @@ train_dataloader = DataLoader(dataset, batch_size=opt.batch_size, sampler=train_
 val_dataloader = DataLoader(dataset, batch_size=opt.batch_size, sampler=valid_sampler,
                             num_workers=opt.n_cpu, drop_last=True)
 
-print(train_dataloader.__len__())
-print(val_dataloader.__len__())
-
+print("Train Batch Number: " + str(train_dataloader.__len__()))
+print("Validate Batch Number: " + str(val_dataloader.__len__()))
 
 # Create sample and checkpoint directories
 os.makedirs("images/%s" % opt.dataset_name, exist_ok=True)
 os.makedirs("saved_models/%s" % opt.dataset_name, exist_ok=True)
 
-criterion_recon = torch.nn.L1Loss()
 
-'''
+#################################
+#     Configure loss
+#################################
+#
+class HingeGanLoss(nn.Module):
+    def forward(self, input, target_is_real=True):
+        if target_is_real:
+            # input的值应该是介于0和1之间，input-1之后在-1到0之间，所以和0比的话选择最小值（真）
+            # 对于真来说，值越小置信度越低（从1接近于0），产生的loss越大
+            # minval = torch.min(input - 1, get_zero_tensor(input))
+
+            # 新的注释，input的值为-1到1，1为真实，-1为假，所以区间为
+            gt = torch.zeros_like(input)
+            minval = torch.max(1 - input, gt)
+            loss = torch.mean(minval)
+        else:
+            # input的值应该是介于-1和0之间，-input-1之后在-1到0之间，所以和0比的话选择最小值(假)
+            # 对于假来说，值的置信度越低（从-1接近于0），产生的loss越大
+            gt = torch.zeros_like(input)
+            minval = torch.max(input + 1, gt)
+            loss = torch.mean(minval)
+
+        return loss
+
+
+# todo: 为什么这么计算？有什么用？
+# 如果输入的两个参数都是标量： -0.5 * (1 + logvar - mu ** 2 + 2.7183 ** logvar)
+# KL Divergence loss used in VAE with an image encoder
+class KLDLoss(nn.Module):
+    def forward(self, mu, logvar):
+        return -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+
+# Perceptual loss that uses a pretrained VGG network
+class VGGLoss(nn.Module):
+    def __init__(self, vgg_path=None):
+        super(VGGLoss, self).__init__()
+        self.vgg = VGG19(vgg_path).cuda()
+        self.criterion = nn.L1Loss()
+        self.weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
+
+    def forward(self, x, y):
+        x_vgg, y_vgg = self.vgg(x), self.vgg(y)
+        loss = 0
+        for i in range(len(x_vgg)):
+            loss += self.weights[i] * self.criterion(x_vgg[i], y_vgg[i].detach())
+        return loss
+
+
+class PerceptuaLoss(nn.Module):
+    def __init__(self):
+        super(PerceptuaLoss, self).__init__()
+        self.criterion = nn.L1Loss()
+        # self.weights = [1.0 / 32, 1.0 / 16, 1.0 / 8, 1.0 / 4, 1.0]
+
+    def forward(self, x, y):
+        # x_vgg, y_vgg = self.vgg(x), self.vgg(y)
+        # num = len(x)
+        loss = 0
+        for i in range(len(x)):
+            loss += 2 ** (len(x) - i) * self.criterion(x[i], y[i])
+        return loss
+
+
+class Dice_loss(nn.Module):
+    def forward(self, prediction, target):
+        """Calculating the dice loss
+        Args:
+            prediction = predicted image
+            target = Targeted image
+        Output:
+            dice_loss"""
+
+        smooth = 1.0
+
+        i_flat = prediction.view(-1)
+        t_flat = target.view(-1)
+
+        intersection = (i_flat * t_flat).sum()
+
+        return 1 - ((2. * intersection + smooth) / (i_flat.sum() + t_flat.sum() + smooth))
+
+
+ganloss = HingeGanLoss()
+styleloss = PerceptuaLoss()
+contentloss = Dice_loss()
+
+# Loss weights
+lambda_style = 2
+lambda_cont = 2
+
+#################################
+#     Configure module
+#################################
 # Initialize encoders, generators and discriminators
-Enc1 = Encoder(dim=opt.dim, n_downsample=opt.n_downsample, n_residual=opt.n_residual, style_dim=opt.style_dim)
-Dec1 = Decoder(dim=opt.dim, n_upsample=opt.n_downsample, n_residual=opt.n_residual, style_dim=opt.style_dim)
-Enc2 = Encoder(dim=opt.dim, n_downsample=opt.n_downsample, n_residual=opt.n_residual, style_dim=opt.style_dim)
-Dec2 = Decoder(dim=opt.dim, n_upsample=opt.n_downsample, n_residual=opt.n_residual, style_dim=opt.style_dim)
-D1 = MultiDiscriminator()
-D2 = MultiDiscriminator()
+encoder = Encoder(opt)
+decoder = Decoder(opt)
+discriminator = EDDiscriminator(opt)
 
 if cuda:
-    Enc1 = Enc1.cuda()
-    Dec1 = Dec1.cuda()
-    Enc2 = Enc2.cuda()
-    Dec2 = Dec2.cuda()
-    D1 = D1.cuda()
-    D2 = D2.cuda()
-    criterion_recon.cuda()
+    encoder = encoder.cuda()
+    Dec1 = decoder.cuda()
+    discriminator = discriminator.cuda()
+    ganloss.cuda()
+    styleloss.cuda()
+    contentloss.cuda()
 
 if opt.epoch != 0:
     # Load pretrained models
-    Enc1.load_state_dict(torch.load("saved_models/%s/Enc1_%d.pth" % (opt.dataset_name, opt.epoch)))
-    Dec1.load_state_dict(torch.load("saved_models/%s/Dec1_%d.pth" % (opt.dataset_name, opt.epoch)))
-    Enc2.load_state_dict(torch.load("saved_models/%s/Enc2_%d.pth" % (opt.dataset_name, opt.epoch)))
-    Dec2.load_state_dict(torch.load("saved_models/%s/Dec2_%d.pth" % (opt.dataset_name, opt.epoch)))
-    D1.load_state_dict(torch.load("saved_models/%s/D1_%d.pth" % (opt.dataset_name, opt.epoch)))
-    D2.load_state_dict(torch.load("saved_models/%s/D2_%d.pth" % (opt.dataset_name, opt.epoch)))
+    encoder.load_state_dict(torch.load("saved_models/%s/decoder_%d.pth" % (opt.dataset_name, opt.epoch)))
+    decoder.load_state_dict(torch.load("saved_models/%s/decoder_%d.pth" % (opt.dataset_name, opt.epoch)))
+    discriminator.load_state_dict(torch.load("saved_models/%s/discriminator_%d.pth" % (opt.dataset_name, opt.epoch)))
 else:
     # Initialize weights
-    Enc1.apply(weights_init_normal)
-    Dec1.apply(weights_init_normal)
-    Enc2.apply(weights_init_normal)
-    Dec2.apply(weights_init_normal)
-    D1.apply(weights_init_normal)
-    D2.apply(weights_init_normal)
-
-# Loss weights
-lambda_gan = 1
-lambda_id = 10
-lambda_style = 1
-lambda_cont = 1
-lambda_cyc = 0
+    encoder.apply(weights_init_normal)
+    decoder.apply(weights_init_normal)
+    discriminator.apply(weights_init_normal)
 
 # Optimizers
 optimizer_G = torch.optim.Adam(
-    itertools.chain(Enc1.parameters(), Dec1.parameters(), Enc2.parameters(), Dec2.parameters()),
+    itertools.chain(encoder.parameters(), decoder.parameters()),
     lr=opt.lr,
     betas=(opt.b1, opt.b2),
 )
-optimizer_D1 = torch.optim.Adam(D1.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
-optimizer_D2 = torch.optim.Adam(D2.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
+
+optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=opt.lr, betas=(opt.b1, opt.b2))
 
 # Learning rate update schedulers
 lr_scheduler_G = torch.optim.lr_scheduler.LambdaLR(
     optimizer_G, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
 )
-lr_scheduler_D1 = torch.optim.lr_scheduler.LambdaLR(
-    optimizer_D1, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
-)
-lr_scheduler_D2 = torch.optim.lr_scheduler.LambdaLR(
-    optimizer_D2, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
+lr_scheduler_D = torch.optim.lr_scheduler.LambdaLR(
+    optimizer_D, lr_lambda=LambdaLR(opt.n_epochs, opt.epoch, opt.decay_epoch).step
 )
 
-Tensor = torch.cuda.FloatTensor if cuda else torch.Tensor
+Tensor = torch.cuda.FloatTensor if cuda else torch.FloatTensor
 
 
-def sample_images(batches_done):
+def sample_images(batches_done, val_dataloader=None):
     """Saves a generated sample from the validation set"""
-    val_dataloader = None
+    # val_dataloader = None
     imgs = next(iter(val_dataloader))
     img_samples = None
-    for img1, img2 in zip(imgs["A"], imgs["B"]):
-        # Create copies of image
-        X1 = img1.unsqueeze(0).repeat(opt.style_dim, 1, 1, 1)
-        X1 = Variable(X1.type(Tensor))
-        # Get random style codes
-        s_code = np.random.uniform(-1, 1, (opt.style_dim, opt.style_dim))
-        s_code = Variable(Tensor(s_code))
-        # Generate samples
-        c_code_1, _ = Enc1(X1)
-        X12 = Dec2(c_code_1, s_code)
-        # Concatenate samples horisontally
-        X12 = torch.cat([x for x in X12.data.cpu()], -1)
-        img_sample = torch.cat((img1, X12), -1).unsqueeze(0)
-        # Concatenate with previous samples vertically
-        img_samples = img_sample if img_samples is None else torch.cat((img_samples, img_sample), -2)
-    save_image(img_samples, "images/%s/%s.png" % (opt.dataset_name, batches_done), nrow=5, normalize=True)
+    with torch.no_grad():
+        for content, mask in zip(imgs["image"], imgs["mask"]):
+            # Generate samples
+            content_processed, content_code, style_code = encoder(content, style)
+            generated = decoder(content_code, style_code[-1])
+
+            img_sample = torch.cat(
+                [content.data.cpu().squeeze(0), mask.data.cpu().squeeze(0), generated.data.cpu().squeeze(0)], -1)
+
+            # Concatenate with previous samples vertically
+            img_samples = img_sample if img_samples is None else torch.cat((img_samples, img_sample), -2)
+
+        save_image(img_samples, "images/%s/%s.png" % (opt.dataset_name, batches_done), nrow=5, normalize=True)
 
 
 #################################
@@ -203,96 +271,74 @@ def sample_images(batches_done):
 #################################
 # Adversarial ground truths
 valid = 1
-fake = 0
+fake = -1
 
 prev_time = time.time()
 for epoch in range(opt.epoch, opt.n_epochs):
     for i, batch in enumerate(train_dataloader):
-
         # Set model input
-        ref_img = batch["img"].to(cuda)
-        mask = batch["mask"].to(cuda)
+        style = batch["image"].cuda()
+        mask = batch["mask"].cuda()
 
+        print(style.shape,mask.shape)
+        print(type(style),type(mask))
+        # print(style)
+        # print(mask)
         # Encode style
+        content_processed, content_code, style_code = encoder(mask, style)
+        generated = decoder(content_code, style_code[-1])
 
-        X1 = None
-        X2 = None
-        style_1 = None
-        style_2 = None
-        # -------------------------------
-        #  Train Encoders and Generators
-        # -------------------------------
+        # fake_real = torch.cat((generated, style), dim=0)
+        # print(discriminator2)
+        # print(discriminator2)
+        # print("*" * 10 + "real" + "*" * 10)
+        # [feats, segpreds, truefalses] = discriminator2(style)
+        # print('...feature...')
+        # for i in feats:
+        #     print(i.shape)
+        # print('...true false...')
+        # for j in truefalses:
+        #     print(j.shape)
+        # print('...seg map...')
+        # for k in segpreds:
+        #     print(k.shape)
+
+        # print("*" * 10 + "generated" + "*" * 10)
+        ref_feats, ref_segpreds, ref_truefalses = discriminator(generated)
+        gen_feats, gen_segpreds, gen_truefalses = discriminator(style)
+
+        # print('...feature...')
+        # for i in feats2:
+        #     print(i.shape)
+        # print('...true false...')
+        # for j in truefalses2:
+        #     print(j.shape)
+        # print('...seg map')
+        # for k in segpreds2:
+        #     print(k.shape)
 
         optimizer_G.zero_grad()
 
-        # Get shared latent representation
-        c_code_1, s_code_1 = Enc1(X1)
-        c_code_2, s_code_2 = Enc2(X2)
-
-        # Reconstruct images
-        X11 = Dec1(c_code_1, s_code_1)
-        X22 = Dec2(c_code_2, s_code_2)
-
-        # Translate images
-        X21 = Dec1(c_code_2, style_1)
-        X12 = Dec2(c_code_1, style_2)
-
-        # Cycle translation
-        c_code_21, s_code_21 = Enc1(X21)
-        c_code_12, s_code_12 = Enc2(X12)
-        X121 = Dec1(c_code_12, s_code_1) if lambda_cyc > 0 else 0
-        X212 = Dec2(c_code_21, s_code_2) if lambda_cyc > 0 else 0
-
         # Losses
-        loss_GAN_1 = lambda_gan * D1.compute_loss(X21, valid)
-        loss_GAN_2 = lambda_gan * D2.compute_loss(X12, valid)
-        loss_ID_1 = lambda_id * criterion_recon(X11, X1)
-        loss_ID_2 = lambda_id * criterion_recon(X22, X2)
-        loss_s_1 = lambda_style * criterion_recon(s_code_21, style_1)
-        loss_s_2 = lambda_style * criterion_recon(s_code_12, style_2)
-        loss_c_1 = lambda_cont * criterion_recon(c_code_12, c_code_1.detach())
-        loss_c_2 = lambda_cont * criterion_recon(c_code_21, c_code_2.detach())
-        loss_cyc_1 = lambda_cyc * criterion_recon(X121, X1) if lambda_cyc > 0 else 0
-        loss_cyc_2 = lambda_cyc * criterion_recon(X212, X2) if lambda_cyc > 0 else 0
+        ref_ganloss = ganloss(torch.sum(ref_truefalses, dim=1) / len(ref_truefalses), target_is_real=True)
+        gen_ganloss = ganloss(torch.sum(gen_truefalses, dim=1) / len(gen_truefalses), target_is_real=False)
+
+        ref_styleloss = styleloss(style_code[:-1], ref_feats)
+        gen_styleloss = styleloss(style_code, gen_feats)
+
+        # ref_contentloss = contentloss(ref_segpreds)
+        gen_contentloss = contentloss(gen_segpreds[-1], content_processed)
 
         # Total loss
-        loss_G = (
-                loss_GAN_1
-                + loss_GAN_2
-                + loss_ID_1
-                + loss_ID_2
-                + loss_s_1
-                + loss_s_2
-                + loss_c_1
-                + loss_c_2
-                + loss_cyc_1
-                + loss_cyc_2
-        )
+        loss_G = ref_ganloss + gen_ganloss + ref_styleloss + gen_styleloss + gen_contentloss
 
         loss_G.backward()
         optimizer_G.step()
 
-        # -----------------------
-        #  Train Discriminator 1
-        # -----------------------
+        loss_D = ref_ganloss + ref_styleloss
 
-        optimizer_D1.zero_grad()
-
-        loss_D1 = D1.compute_loss(X1, valid) + D1.compute_loss(X21.detach(), fake)
-
-        loss_D1.backward()
-        optimizer_D1.step()
-
-        # -----------------------
-        #  Train Discriminator 2
-        # -----------------------
-
-        optimizer_D2.zero_grad()
-
-        loss_D2 = D2.compute_loss(X2, valid) + D2.compute_loss(X12.detach(), fake)
-
-        loss_D2.backward()
-        optimizer_D2.step()
+        loss_D.backward()
+        optimizer_D.step()
 
         # --------------
         #  Log Progress
@@ -307,24 +353,19 @@ for epoch in range(opt.epoch, opt.n_epochs):
         # Print log
         sys.stdout.write(
             "\r[Epoch %d/%d] [Batch %d/%d] [D loss: %f] [G loss: %f] ETA: %s"
-            % (epoch, opt.n_epochs, i, len(train_dataloader), (loss_D1 + loss_D2).item(), loss_G.item(), time_left)
+            % (epoch, opt.n_epochs, i, len(train_dataloader), loss_D.item(), loss_G.item(), time_left)
         )
 
         # If at sample interval save image
         if batches_done % opt.sample_interval == 0:
-            sample_images(batches_done)
+            sample_images(batches_done, val_dataloader)
 
     # Update learning rates
     lr_scheduler_G.step()
-    lr_scheduler_D1.step()
-    lr_scheduler_D2.step()
+    lr_scheduler_D.step()
 
     if opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
         # Save model checkpoints
-        torch.save(Enc1.state_dict(), "saved_models/%s/Enc1_%d.pth" % (opt.dataset_name, epoch))
-        torch.save(Dec1.state_dict(), "saved_models/%s/Dec1_%d.pth" % (opt.dataset_name, epoch))
-        torch.save(Enc2.state_dict(), "saved_models/%s/Enc2_%d.pth" % (opt.dataset_name, epoch))
-        torch.save(Dec2.state_dict(), "saved_models/%s/Dec2_%d.pth" % (opt.dataset_name, epoch))
-        torch.save(D1.state_dict(), "saved_models/%s/D1_%d.pth" % (opt.dataset_name, epoch))
-        torch.save(D2.state_dict(), "saved_models/%s/D2_%d.pth" % (opt.dataset_name, epoch))
-'''
+        torch.save(encoder.state_dict(), "saved_models/%s/encoder_%d.pth" % (opt.dataset_name, epoch))
+        torch.save(decoder.state_dict(), "saved_models/%s/decoder_%d.pth" % (opt.dataset_name, epoch))
+        torch.save(discriminator.state_dict(), "saved_models/%s/discriminator_%d.pth" % (opt.dataset_name, epoch))

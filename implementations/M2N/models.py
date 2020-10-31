@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+import torchvision
 from torch.autograd import Variable
 import numpy as np
 import os
@@ -118,8 +119,8 @@ class StyleEncoder(nn.Module):
             ),
 
         # Average pool and output layer
-        # self.lab_poollayer = nn.AdaptiveAvgPool2d(1)
-        self.lab_poollayer = nn.MaxPool2d(kernel_size=2)
+        self.last_poollayer = nn.AdaptiveAvgPool2d(1)
+        # self.lab_poollayer = nn.MaxPool2d(kernel_size=2)
         self.last_covlayer = nn.Conv2d(dim, style_dim, 1, 1, 0)
 
     def forward(self, x):
@@ -143,10 +144,10 @@ class StyleEncoder(nn.Module):
                 out = m(x)
                 outputs.append(out)
         # outputs.append(x)
-        x = self.lab_poollayer(x)
+        x = self.last_poollayer(x)
         # outputs.append(x)
-        out = self.last_covlayer(x)
-        outputs.append(out)
+        x = self.last_covlayer(x)
+        outputs.append(x)
         return outputs
 
 
@@ -194,7 +195,7 @@ class ContentEncoder(nn.Module):
         # Residual blocks
         for _ in range(n_residual):
             layers += [ResidualBlock(dim, norm="in")]
-
+        # layers.append(nn.AdaptiveAvgPool2d(1))
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
@@ -203,7 +204,7 @@ class ContentEncoder(nn.Module):
 
     def preprocess_input(self, mask):
         # move to GPU and change data types
-        mask = mask.cuda()
+        # mask = mask
         # create one-hot label map
         # 将不同的类别映射到不同的channel上
         # 读取的label map是单通道的，背景是0，类别一是1，类别二是2……
@@ -260,6 +261,187 @@ class MultiDiscriminator(nn.Module):
             outputs.append(m(x))
             x = self.downsample(x)
         return outputs
+
+
+class EDDiscriminator(nn.Module):
+    def __init__(self, opt):
+        super(EDDiscriminator, self).__init__()
+        self.opt = opt
+        style_dim = self.opt.label_nc
+        n_downsample = self.opt.n_downsample
+        dim = self.opt.dim
+        in_channels = 3
+
+        # encoder
+        # Initial conv block
+        self.init_layer = nn.Sequential(nn.ReflectionPad2d(3), nn.Conv2d(in_channels, dim, 7), nn.ReLU(inplace=True))
+
+        self.downmodels = nn.ModuleList()
+        # Downsampling
+        for i in range(2):
+            self.downmodels.add_module(
+                "se_%d" % i,
+                nn.Sequential(
+                    nn.Conv2d(dim, dim * 2, 4, stride=2, padding=1),
+                    nn.ReLU(inplace=True)
+                ),
+            ),
+            self.downmodels.add_module(
+                "cc%d" % i,
+                nn.Sequential(
+                    nn.Conv2d(dim * 2, style_dim, 1, 1, 0),
+                    nn.ReLU(inplace=True)
+                )
+            ),
+            dim *= 2
+
+        # Downsampling with constant depth
+        for i in range(2, n_downsample):
+            self.downmodels.add_module(
+                "se_%d" % i,
+                nn.Sequential(
+                    nn.Conv2d(dim, dim, 4, stride=2, padding=1),
+                    nn.ReLU(inplace=True)
+                ),
+            )
+            self.downmodels.add_module(
+                "cc%d" % i,
+                nn.Sequential(
+                    nn.Conv2d(dim, style_dim, 1, 1, 0),
+                    nn.ReLU(inplace=True)
+                )
+            ),
+
+        # Average pool and output layer
+        # self.last_poollayer = nn.AdaptiveAvgPool2d(1)  # 无论如何最后一个都是宽高都是1
+        self.last_poollayer = nn.MaxPool2d(kernel_size=2)
+        self.last_covlayer = nn.Conv2d(dim, dim, 1, 1, 0)
+
+        # decoder
+        # n_residual = opt.n_residual
+        # out_channels = 3
+
+        self.upmodels = nn.ModuleList()
+        # Upsampling
+        for i in range(2):
+            self.upmodels.add_module(
+                "upconv_%d" % i,
+                nn.Sequential(
+                    nn.Upsample(scale_factor=2),
+                    nn.Conv2d(dim, dim // 2, 5, stride=1, padding=2),
+                    LayerNorm(dim // 2),
+                    nn.ReLU(inplace=True),
+                ),
+            ),
+            self.upmodels.add_module(
+                "upcontent_%d" % i,
+                nn.Sequential(
+                    nn.Upsample(scale_factor=2),
+                    nn.Conv2d(dim // 2, style_dim, 1, 1, 0),
+                    nn.ReLU(inplace=True)
+                )
+            ),
+            self.upmodels.add_module(
+                "uptruefalse%d" % i,
+                nn.Sequential(
+                    nn.AdaptiveAvgPool2d(1),
+                    nn.Conv2d(dim // 2, 1, 1, 1, 0),
+                    nn.ReLU(inplace=True)
+                )
+            )
+            dim //= 2
+
+        # Upsampling with constant depth
+        for i in range(2, n_downsample):
+            self.upmodels.add_module(
+                "upconv_%d" % i,
+                nn.Sequential(
+                    nn.Upsample(scale_factor=2),
+                    nn.Conv2d(dim, dim, 5, stride=1, padding=2),
+                    LayerNorm(dim),
+                    nn.ReLU(inplace=True),
+                ),
+            ),
+            self.upmodels.add_module(
+                "upcontent_%d" % i,
+                nn.Sequential(
+                    nn.Upsample(scale_factor=2),
+                    nn.Conv2d(dim, style_dim, 1, 1, 0),
+                    nn.ReLU(inplace=True)
+                )
+            ),
+            self.upmodels.add_module(
+                "uptruefalse_%d" % i,
+                nn.Sequential(
+                    nn.AdaptiveAvgPool2d(1),
+                    nn.Conv2d(dim, 1, 1, 1, 0),
+                    nn.ReLU(inplace=True)
+                )
+            ),
+        # # Residual blocks
+        # for _ in range(n_residual):
+        #     layers += [ResidualBlock(dim, norm="adain")]
+        #
+        # # Upsampling
+        # for _ in range(n_downsample):
+        #     layers += [
+        #         nn.Upsample(scale_factor=2),
+        #         nn.Conv2d(dim, dim // 2, 5, stride=1, padding=2),
+        #         LayerNorm(dim // 2),
+        #         nn.ReLU(inplace=True),
+        #     ]
+        #     dim = dim // 2
+
+        # Average pool and output layer
+        # self.last_poollayer = nn.AdaptiveAvgPool2d(1)  # 无论如何最后一个都是宽高都是1
+        # # self.lab_poollayer = nn.MaxPool2d(kernel_size=2)
+        # self.last_covlayer = nn.Conv2d(dim, style_dim, 1, 1, 0)
+
+        # Output layer
+        # layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, out_channels, 7), nn.Tanh()]
+        #
+        # self.model = nn.Sequential(*layers)
+
+    def forward(self, img):
+        x = self.init_layer(img)
+        # outputs = [x]
+        feats = []  # encoder部分输出的style特征
+        conts = []
+        fakereals = []
+        for i, m in enumerate(self.downmodels):
+            if i % 2 == 0:
+                x = m(x)
+            else:
+                out = m(x)
+                feats.append(out)
+        # outputs.append(x)
+        x = self.last_poollayer(x)
+        # outputs.append(x)
+        x = self.last_covlayer(x)
+        # feats.append(out)
+
+        tag = 0
+        for i, m in enumerate(self.upmodels):
+            if tag == 0:
+                x = m(x)
+            elif tag == 1:
+                out = m(x)
+                conts.append(out)
+            else:
+                out = m(x)
+                fakereals.append(out)
+
+            if tag == 2:
+                tag = 0
+            else:
+                tag += 1
+
+        # # outputs.append(x)
+        # x = self.lab_poollayer(x)
+        # # outputs.append(x)
+        # out = self.last_covlayer(x)
+        # outputs.append(out)
+        return feats, conts, fakereals
 
 
 # Feature-Pyramid Semantics Embedding Discriminator
@@ -418,13 +600,13 @@ class Decoder(nn.Module):
         super(Decoder, self).__init__()
         self.opt = opt
         n_residual = opt.n_residual
-        dim = opt.dim
         out_channels = 3
         n_upsample = opt.n_downsample
         style_dim = opt.label_nc
 
         layers = []
-        dim = dim * 2 ** n_upsample
+        input_dim = opt.dim * 2 ** n_upsample
+        dim = input_dim
         # Residual blocks
         for _ in range(n_residual):
             layers += [ResidualBlock(dim, norm="adain")]
@@ -446,6 +628,8 @@ class Decoder(nn.Module):
 
         # Initiate mlp (predicts AdaIN parameters)
         num_adain_params = self.get_num_adain_params()
+        self.changechannel = nn.Conv2d(input_dim, style_dim, 1, 1)
+        self.changesize = nn.AdaptiveAvgPool2d(1)
         self.mlp = MLP(style_dim, num_adain_params)
 
     def get_num_adain_params(self):
@@ -476,7 +660,11 @@ class Decoder(nn.Module):
 
     def forward(self, content_code, style_code):
         # Update AdaIN parameters by MLP prediction based off style code
-        self.assign_adain_params(self.mlp(style_code))
+        new_c = self.changesize(self.changechannel(content_code))
+        print(new_c.shape,style_code.shape)
+        style_conditional_content = torch.matmul(new_c,style_code)
+        print("style_conditional_content:", style_conditional_content.shape)
+        self.assign_adain_params(self.mlp(style_conditional_content))
         img = self.model(content_code)
         return img
 
@@ -582,11 +770,48 @@ class LayerNorm(nn.Module):
             x = x * self.gamma.view(*shape) + self.beta.view(*shape)
         return x
 
+# VGG architecter, used for the perceptual loss using a pretrained VGG network
+class VGG19(torch.nn.Module):
+    def __init__(self, requires_grad=False):
+        super().__init__()
+        vgg_pretrained_features = torchvision.models.vgg19(pretrained=True).features
+
+        self.slice1 = torch.nn.Sequential()
+        self.slice2 = torch.nn.Sequential()
+        self.slice3 = torch.nn.Sequential()
+        self.slice4 = torch.nn.Sequential()
+        self.slice5 = torch.nn.Sequential()
+
+        # 原 vgg19 =  16 卷积层 + 3 全连接层
+        # torchvision中的vgg不包含全连接层，共16个卷积层
+        # 每个卷积层带一个relu，因此vgg19总的层数为16*2+5 = 37 [0:37]
+        for x in range(2):
+            self.slice1.add_module(str(x), vgg_pretrained_features[x])
+        for x in range(2, 7):
+            self.slice2.add_module(str(x), vgg_pretrained_features[x])
+        for x in range(7, 12):
+            self.slice3.add_module(str(x), vgg_pretrained_features[x])
+        for x in range(12, 21):
+            self.slice4.add_module(str(x), vgg_pretrained_features[x])
+        for x in range(21, 30):
+            self.slice5.add_module(str(x), vgg_pretrained_features[x])
+        if not requires_grad:
+            for param in self.parameters():
+                param.requires_grad = False
+
+    def forward(self, X):
+        h_relu1 = self.slice1(X)
+        h_relu2 = self.slice2(h_relu1)
+        h_relu3 = self.slice3(h_relu2)
+        h_relu4 = self.slice4(h_relu3)
+        h_relu5 = self.slice5(h_relu4)
+        out = [h_relu1, h_relu2, h_relu3, h_relu4, h_relu5]
+        return out
 
 if __name__ == "__main__":
     import argparse
 
-    os.environ['CUDA_VISIBLE_DEVICES'] = '3'
+    os.environ['CUDA_VISIBLE_DEVICES'] = '1'
     parser = argparse.ArgumentParser()
     parser.add_argument("--epoch", type=int, default=0, help="epoch to start training from")
     parser.add_argument("--n_epochs", type=int, default=200, help="number of epochs of training")
@@ -603,7 +828,7 @@ if __name__ == "__main__":
     parser.add_argument("--channels", type=int, default=3, help="number of image channels")
     parser.add_argument("--sample_interval", type=int, default=400, help="interval saving generator samples")
     parser.add_argument("--checkpoint_interval", type=int, default=-1, help="interval between saving model checkpoints")
-    parser.add_argument("--n_downsample", type=int, default=6, help="number downsampling layers in encoder")
+    parser.add_argument("--n_downsample", type=int, default=5, help="number downsampling layers in encoder")
     parser.add_argument("--n_residual", type=int, default=3, help="number of residual blocks in encoder / decoder")
     parser.add_argument("--dim", type=int, default=64, help="number of filters in first encoder layer")
     parser.add_argument("--label_nc", type=int, default=5, help="# of input label classes")
@@ -640,19 +865,24 @@ if __name__ == "__main__":
     # for r in results:
     #     print(r.shape)
 
-    discriminator2 = FPSEDiscriminator(opt).cuda()
+    discriminator2 = EDDiscriminator(opt).cuda()
     # fake_real = torch.cat((generated, style), dim=0)
+    # print(discriminator2)
+    # print(discriminator2)
     print("*" * 10 + "real" + "*" * 10)
-    [feats, truefalses] = discriminator2(style)
+    [feats, segpreds, truefalses] = discriminator2(style)
     print('...feature...')
     for i in feats:
         print(i.shape)
     print('...true false...')
     for j in truefalses:
         print(j.shape)
+    print('...seg map...')
+    for k in segpreds:
+        print(k.shape)
 
     print("*" * 10 + "generated" + "*" * 10)
-    [feats2, truefalses2, segpreds2] = discriminator2(generated, has_segmap=True, segmap=content)
+    [feats2, segpreds2, truefalses2] = discriminator2(generated)
     print('...feature...')
     for i in feats2:
         print(i.shape)
