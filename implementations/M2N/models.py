@@ -380,30 +380,7 @@ class EDDiscriminator(nn.Module):
                     nn.Conv2d(dim, 1, 1, 1, 0),
                     nn.ReLU(inplace=True)
                 )
-            ),
-        # # Residual blocks
-        # for _ in range(n_residual):
-        #     layers += [ResidualBlock(dim, norm="adain")]
-        #
-        # # Upsampling
-        # for _ in range(n_downsample):
-        #     layers += [
-        #         nn.Upsample(scale_factor=2),
-        #         nn.Conv2d(dim, dim // 2, 5, stride=1, padding=2),
-        #         LayerNorm(dim // 2),
-        #         nn.ReLU(inplace=True),
-        #     ]
-        #     dim = dim // 2
-
-        # Average pool and output layer
-        # self.last_poollayer = nn.AdaptiveAvgPool2d(1)  # 无论如何最后一个都是宽高都是1
-        # # self.lab_poollayer = nn.MaxPool2d(kernel_size=2)
-        # self.last_covlayer = nn.Conv2d(dim, style_dim, 1, 1, 0)
-
-        # Output layer
-        # layers += [nn.ReflectionPad2d(3), nn.Conv2d(dim, out_channels, 7), nn.Tanh()]
-        #
-        # self.model = nn.Sequential(*layers)
+            )
 
     def forward(self, img):
         x = self.init_layer(img)
@@ -417,11 +394,8 @@ class EDDiscriminator(nn.Module):
             else:
                 out = m(x)
                 feats.append(out)
-        # outputs.append(x)
         x = self.last_poollayer(x)
-        # outputs.append(x)
         x = self.last_covlayer(x)
-        # feats.append(out)
 
         tag = 0
         for i, m in enumerate(self.upmodels):
@@ -439,11 +413,6 @@ class EDDiscriminator(nn.Module):
             else:
                 tag += 1
 
-        # # outputs.append(x)
-        # x = self.lab_poollayer(x)
-        # # outputs.append(x)
-        # out = self.last_covlayer(x)
-        # outputs.append(out)
         return feats, conts, fakereals
 
 
@@ -664,9 +633,9 @@ class Decoder(nn.Module):
     def forward(self, content_code, style_code):
         # Update AdaIN parameters by MLP prediction based off style code
         new_c = self.changesize(self.changechannel(content_code))
-        print(new_c.shape, style_code.shape)
+        # print(new_c.shape, style_code.shape)
         style_conditional_content = torch.matmul(new_c, style_code)
-        print("style_conditional_content:", style_conditional_content.shape)
+        # print("style_conditional_content:", style_conditional_content.shape)
         self.assign_adain_params(self.mlp(style_conditional_content))
         img = self.model(content_code)
         return img

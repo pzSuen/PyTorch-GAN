@@ -63,13 +63,13 @@ class ImageDataset(Dataset):
         img = np.transpose(img, (2, 0, 1))
         mask = np.expand_dims(mask, 0)
 
-        print(img.shape, mask.shape)
+        # print(img.shape, mask.shape)
         # mask = self.preprocess_input(mask)
         mask = self.my_scatter(mask)
         # print(img.shape, mask.shape)
-        print("+" * 20)
-        print(type(img), type(mask))
-        print(img.shape, mask.shape)
+        # print("+" * 20)
+        # print(type(img), type(mask))
+        # print(img.shape, mask.shape)
 
         img, mask = torch.from_numpy(img), torch.from_numpy(mask)
         # img = img.permute(2, 0, 1)
@@ -104,7 +104,7 @@ class ImageDataset(Dataset):
         # assert cs == 1, "The channel of the input mask must be 1."
         label_nc = self.opt.label_nc
         # re = torch.zeros(size=(label_nc, h, w))
-        re = np.zeros(shape=(label_nc, h, w))
+        re = np.zeros(shape=(label_nc, h, w), dtype=np.float32)
 
         for j in range(cs):
             for m in range(h):

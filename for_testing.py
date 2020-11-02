@@ -145,3 +145,36 @@ if __name__ == "__main__":
     # print("#" * 20)
     # print(re.shape)
     # print(re)
+    a = torch.ones(size=(12, 1, 1, 1)) * -1
+    b = torch.ones(size=(12, 1, 1, 1)) * -1
+    c = torch.ones(size=(12, 1, 1, 1)) * -1
+    d = torch.ones(size=(12, 1, 1, 1)) * -1
+    e = torch.ones(size=(12, 1, 1, 1)) * -1
+
+    # a = torch.zeros(size=(12, 1, 1, 1))
+    # b = torch.zeros(size=(12, 1, 1, 1))
+    # c = torch.zeros(size=(12, 1, 1, 1))
+    # d = torch.zeros(size=(12, 1, 1, 1))
+    # e = torch.zeros(size=(12, 1, 1, 1))
+
+    # a = torch.ones(size=(12, 1, 1, 1))
+    # b = torch.ones(size=(12, 1, 1, 1))
+    # c = torch.ones(size=(12, 1, 1, 1))
+    # d = torch.ones(size=(12, 1, 1, 1))
+    # e = torch.ones(size=(12, 1, 1, 1))
+
+    input = [a, b, c, d, e]
+    # all_input = torch.cat(input, dim=1)
+
+    num = len(input)
+    # avg_input = torch.zeros_like(input[0])
+    # print(avg_input)
+    minval = torch.zeros_like(input[0])
+    for i in range(num):
+        # 越浅层的权重越大
+        input_i = input[i]
+        gt = torch.zeros_like(input_i)
+        minval += torch.max(1 - input_i, gt) * 0.5 ** (i + 1)
+        # print(minval.shape)
+    loss = torch.mean(minval)
+    print(loss)
