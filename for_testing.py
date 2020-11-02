@@ -123,8 +123,25 @@ if __name__ == "__main__":
     # output = m(input)
     # print(output.shape)
 
-    a = torch.ones(size=(1, 1, 2, 2)).cuda()
-    b = torch.ones(size=(1, 1, 2, 2)) * 2
-    c = torch.ones(size=(1, 1, 2, 2)) * 3
-    d = torch.cat([a, b, c], dim=-1)
-    print(d.shape)
+    # bg = torch.zeros(size=(1, 1, 2, 2), dtype=torch.int64)
+    # a = torch.ones(size=(1, 1, 2, 2), dtype=torch.int64)
+    # b = torch.ones(size=(1, 1, 2, 2), dtype=torch.int64) * 2
+    # c = torch.ones(size=(1, 1, 2, 2), dtype=torch.int64) * 3
+    # d = torch.cat([bg, a], dim=-1)
+    # e = torch.cat([b, c], dim=-1)
+    # f = torch.cat([d, e], dim=-2)
+    # # d = torch.randint(0, 4, (1, 1, 5, 5))
+    # print(f.shape)
+    # print(f)
+    #
+    # label_nc = 4
+    # bs, cs, h, w = f.shape
+    # re = torch.zeros(size=(bs, label_nc, h, w))
+    # for i in range(bs):
+    #     for m in range(h):
+    #         for n in range(w):
+    #             re[i, f[i, 0, m, n], m, n] = 1
+    #
+    # print("#" * 20)
+    # print(re.shape)
+    # print(re)

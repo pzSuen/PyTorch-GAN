@@ -78,7 +78,7 @@ transformer = A.Compose([
     )
 ])
 
-dataset = ImageDataset('/home/pzsuen/Code/I2I/M2N/datasets/%s/' % opt.dataset_name, transformer=transformer)
+dataset = ImageDataset(opt, '/home/pzsuen/Code/I2I/M2N/datasets/%s/' % opt.dataset_name, transformer=transformer)
 
 shuffle_dataset = True
 random_seed = 42
@@ -279,9 +279,10 @@ for epoch in range(opt.epoch, opt.n_epochs):
         # Set model input
         style = batch["image"].cuda()
         mask = batch["mask"].cuda()
-
-        print(style.shape,mask.shape)
-        print(type(style),type(mask))
+        print("#" * 20)
+        print(style.shape, mask.shape)
+        print(type(style), type(mask))
+        print(style, mask)
         # print(style)
         # print(mask)
         # Encode style
@@ -360,12 +361,12 @@ for epoch in range(opt.epoch, opt.n_epochs):
         if batches_done % opt.sample_interval == 0:
             sample_images(batches_done, val_dataloader)
 
-    # Update learning rates
-    lr_scheduler_G.step()
-    lr_scheduler_D.step()
+        # Update learning rates
+        lr_scheduler_G.step()
+        lr_scheduler_D.step()
 
-    if opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
-        # Save model checkpoints
-        torch.save(encoder.state_dict(), "saved_models/%s/encoder_%d.pth" % (opt.dataset_name, epoch))
+        if opt.checkpoint_interval != -1 and epoch % opt.checkpoint_interval == 0:
+            # Save model checkpoints
+            torch.save(encoder.state_dict(), "saved_models/%s/encoder_%d.pth" % (opt.dataset_name, epoch))
         torch.save(decoder.state_dict(), "saved_models/%s/decoder_%d.pth" % (opt.dataset_name, epoch))
         torch.save(discriminator.state_dict(), "saved_models/%s/discriminator_%d.pth" % (opt.dataset_name, epoch))

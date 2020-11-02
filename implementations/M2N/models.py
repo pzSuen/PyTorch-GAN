@@ -199,7 +199,7 @@ class ContentEncoder(nn.Module):
         self.model = nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.preprocess_input(x)
+        # x = self.preprocess_input(x)
         return x, self.model(x)
 
     def preprocess_input(self, mask):
@@ -212,7 +212,10 @@ class ContentEncoder(nn.Module):
         nc = self.opt.label_nc  # label_nc是包含背景的
         input_label = self.FloatTensor(bs, nc, h, w).zero_()
         # 对于该图像不存在的类别的那一个channel会是全0
-        input_semantics = input_label.scatter_(1, mask, 1.0)  # (dim,index,src)
+        # print("#" * 20)
+        # print(type(mask))
+        # torch.scatter()
+        input_semantics = input_label.scatter_(dim=1, index=mask, src=1.0)  # (dim,index,src)
 
         return input_semantics
 
@@ -661,8 +664,8 @@ class Decoder(nn.Module):
     def forward(self, content_code, style_code):
         # Update AdaIN parameters by MLP prediction based off style code
         new_c = self.changesize(self.changechannel(content_code))
-        print(new_c.shape,style_code.shape)
-        style_conditional_content = torch.matmul(new_c,style_code)
+        print(new_c.shape, style_code.shape)
+        style_conditional_content = torch.matmul(new_c, style_code)
         print("style_conditional_content:", style_conditional_content.shape)
         self.assign_adain_params(self.mlp(style_conditional_content))
         img = self.model(content_code)
@@ -770,6 +773,7 @@ class LayerNorm(nn.Module):
             x = x * self.gamma.view(*shape) + self.beta.view(*shape)
         return x
 
+
 # VGG architecter, used for the perceptual loss using a pretrained VGG network
 class VGG19(torch.nn.Module):
     def __init__(self, requires_grad=False):
@@ -807,6 +811,7 @@ class VGG19(torch.nn.Module):
         h_relu5 = self.slice5(h_relu4)
         out = [h_relu1, h_relu2, h_relu3, h_relu4, h_relu5]
         return out
+
 
 if __name__ == "__main__":
     import argparse
